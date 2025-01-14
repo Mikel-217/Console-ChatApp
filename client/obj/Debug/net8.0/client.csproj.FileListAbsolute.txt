@@ -12,3 +12,4 @@ C:\tmp\chat\client\obj\Debug\net8.0\refint\client.dll
 C:\tmp\chat\client\obj\Debug\net8.0\client.pdb
 C:\tmp\chat\client\obj\Debug\net8.0\client.genruntimeconfig.cache
 C:\tmp\chat\client\obj\Debug\net8.0\ref\client.dll
+C:\tmp\chat\client\obj\Debug\net8.0\client.sourcelink.json

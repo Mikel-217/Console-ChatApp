@@ -42,21 +42,23 @@ public class MainServer {
         string? data = null;
         byte[] bytes; 
 
-        if(client.Connected) {
-            string _message = "Pls enter Username: ";
-            bytes = Encoding.UTF8.GetBytes(_message, 0, _message.Length);
-            client.Send(bytes);
-            bytes = new byte[256];
-            client.Receive(bytes);
-            _message = Encoding.UTF8.GetString(bytes);
-        }
-
+        
+        string _message = "Pls enter Username: ";
+        bytes = Encoding.UTF8.GetBytes(_message, 0, _message.Length);
+        client.Send(bytes);
+        bytes = new byte[256];
+        client.Receive(bytes);
+        _message = Encoding.UTF8.GetString(bytes);
+        Console.WriteLine(_message);
+        _message = "Username Registrerd. You can send Messages";
+        bytes = Encoding.UTF8.GetBytes(_message);
+        client.Send(bytes);
+        
         while (client.Connected) {
             bytes = new byte[256];
             client.Receive(bytes);
             data = Encoding.UTF8.GetString(bytes, 0 , bytes.Length);
-            
-
+        
             Console.WriteLine($"Message: {data}");
 
             if(!client.Connected) {
