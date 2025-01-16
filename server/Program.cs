@@ -1,25 +1,20 @@
-﻿using System.Data.Common;
-using System.Dynamic;
-using System.Net;
+﻿using System.Net;
 using System.Net.Sockets;
-using System.Runtime.CompilerServices;
 using System.Text;
-
+using System.Threading.Tasks;
 
 namespace Server;
 
 public class Clients {
     public int ID { get; set; }
     public string? Username { get; set; }
-
 }
-
 
 public class PMAin {
 
-    public static void Main(string[] args) {
+    public static async Task Main(string[] args) {
         MainServer main = new MainServer();
-        main.serverStart();       
+        await main.serverStart();
     }
 }
 
@@ -27,7 +22,7 @@ public class MainServer {
     List<Clients> clients = new List<Clients>();
     List<Socket> clientSockets = new List<Socket>();
 
-    public void serverStart() {
+    public async Task serverStart() {
         IPHostEntry host = Dns.GetHostEntry("localhost");
         IPAddress ipaddr = host.AddressList[0];
         IPEndPoint localEndpoint = new IPEndPoint(ipaddr, 1300);
@@ -37,76 +32,113 @@ public class MainServer {
             Socket listener = new Socket(ipaddr.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
             listener.Bind(localEndpoint);
             listener.Listen(10);
-            Console.WriteLine($"Waiting for Connection on {ipaddr}:{localEndpoint}");
-            while (true) {
-                Socket client = listener.Accept();
-                clientSockets.Add(client);
 
-                byte[] bytes;
-                bytes = new byte[1024];
-                string _message = "Pls enter Username: ";
-                bytes = Encoding.UTF8.GetBytes(_message, 0, _message.Length);
-                client.Send(bytes);
-                client.Receive(bytes);
-                string _user = Encoding.UTF8.GetString(bytes);
-                Console.WriteLine(_user);
-                _message = "Username Registrerd. You can send Messages";
-                bytes = Encoding.UTF8.GetBytes(_message);
-                client.Send(bytes);
+            Console.WriteLine($"Waiting for connections on {ipaddr}:{localEndpoint.Port}");
+
+            while (true) {
+                Socket client = await listener.AcceptAsync();
+                clientSockets.Add(client);
+                Console.WriteLine("A new client has connected.");
+                
+                string message = "Please enter Username:";
+                await sendData(message, client);
+
+                string _user = await receiveData(client);
+                if (string.IsNullOrWhiteSpace(_user)) {
+                    Console.WriteLine("Invalid username. Closing connection.");
+                    client.Close();
+                    clientSockets.Remove(client);
+                    continue;
+                }
+
+                message = "Username Registered. You can send Messages.";
+                await sendData(message, client);
+
                 clientID++;
-                string _message2 = Convert.ToString(clientID);
-                //Sending USer ID to Client
-                bytes = new byte[256];
-                bytes = Encoding.UTF8.GetBytes(_message2);
-                client.Send(bytes);
-                Console.WriteLine(clientID);
                 Clients newClient = new Clients {
                     ID = clientID,
                     Username = _user
                 };
                 clients.Add(newClient);
-                
-                Thread clientThread = new Thread(() => handleClient(client));
-                clientThread.Start();
+                message = $"{clientID}";
+                Console.WriteLine(message);
+                await sendData(message, client);
+
+                _ = handleClient(client);
             }
-        } catch(SocketException e) {
+        } catch (SocketException e) {
             Console.WriteLine(e.Message);
         }
     }
-    public void handleClient(Socket client) {
-        string? data = null;
-        byte[] bytes;
-        
-        while (client.Connected) {
-            bytes = new byte[1024];
-            client.Receive(bytes);
-            string recivedMessage = Encoding.UTF8.GetString(bytes);
-            string[] parts = recivedMessage.Split(':');
-            int clientID = int.Parse(parts[0]);
-            data = parts[1];
 
-            Console.WriteLine($"{clientID} {data}");
-            Thread sending = new Thread(() => sendBroadcast(data, client, clientID));
-            sending.Start();
-            //Testing purpose:
-            // Console.WriteLine($"Message: {data}");
-            if(!client.Connected) {
-                Console.WriteLine($"Client Disconectet {client.RemoteEndPoint}");
+    public async Task handleClient(Socket client) {
+        try {
+            while (client.Connected) {
+                string receivedMessage = await receiveData(client);
+
+                if (string.IsNullOrWhiteSpace(receivedMessage)) {
+                    Console.WriteLine("Empty message received. Ignoring.");
+                    continue;
+                }
+                Console.WriteLine(receivedMessage);
+                string[] parts = receivedMessage.Split(':', 2);
+                Console.WriteLine($"{parts[0]} {parts[1]})");
+                if (parts.Length < 2 || !int.TryParse(parts[0], out int clientID)) {
+                    Console.WriteLine("Invalid message format. Expected 'clientID:message'.");
+                    continue;
+                }
+
+                string data = parts[1];
+                await sendBroadcast(data, clientID);
             }
-        } 
+        } catch (Exception e) {
+            Console.WriteLine(e.Message);
+        } finally {
+            lock (clientSockets) {
+                clientSockets.Remove(client);
+            }
+            client.Close();
+            Console.WriteLine("Client disconnected.");
+        }
     }
 
-    public void sendBroadcast(string data, Socket client, int clientID) {
+    public async Task sendBroadcast(string data, int clientID) {
         Clients? username = clients.FirstOrDefault(client => client.ID == clientID);
-        string? sendingUser = username!.Username;
-        Console.WriteLine(sendingUser);
-
-        foreach (var clients in clientSockets) {
-            string _message = sendingUser+":" + data;
-            Console.WriteLine(_message);
-            byte[] buffer = new byte[1024];
-            buffer = Encoding.UTF8.GetBytes(_message);
-            client.Send(buffer);
+        if (username == null) {
+            Console.WriteLine($"Client with ID {clientID} not found.");
+            return;
         }
+
+        string sendingUser = username.Username ?? "Unknown";
+        string message = $"{sendingUser}: {data}";
+        Console.WriteLine($"Broadcasting message: {message}");
+
+        byte[] sendingData = Encoding.UTF8.GetBytes(message);
+        lock (clientSockets) {
+            foreach (var client in clientSockets) {
+                if (client.Connected) {
+                    try {
+                        client.Send(sendingData);
+                    } catch (Exception e) {
+                        Console.WriteLine(e.Message);
+                    }
+                }
+            }
+        }
+    }
+
+    public async Task sendData(string _message, Socket client) {
+        byte[] bytes = Encoding.UTF8.GetBytes(_message);
+        await client.SendAsync(bytes, SocketFlags.None);
+    }
+
+    public async Task<string> receiveData(Socket client) {
+        byte[] buffer = new byte[1024];
+        int bytesRead = await client.ReceiveAsync(buffer, SocketFlags.None);
+
+        if (bytesRead == 0) {
+            throw new Exception("Client disconnected.");
+        }
+        return Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
     }
 }
